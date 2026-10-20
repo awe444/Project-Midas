@@ -25,9 +25,15 @@ extern "C" {
 
 #ident "$Revision: 1.4 $"
 
+#if defined(__ANDROID__) && !defined(TARGET_N64)
+/* Android port build: bionic defines bcopy/bzero as macros in <strings.h>,
+ * which PR/os.h already includes there; use those (as os.h does). */
+#include <strings.h>
+#else
 extern void    bcopy(const void *, void *, int);
 extern int    bcmp(const void *, const void *, int);
 extern void    bzero(void *, int);
+#endif
 
 #ifdef __cplusplus
 }

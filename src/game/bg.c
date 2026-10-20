@@ -27,6 +27,10 @@
 #include <string.h>
 #endif
 
+/* defined below but called first: clang rejects the implicit declaration
+ * gcc only warns about (Android build) */
+void bgGetRoomCenter(s32 roomnum, coord3d *dst);
+
 
 #define BG_STACK_SIZE 20
 #define STAGES_MAX 38

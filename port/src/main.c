@@ -512,6 +512,62 @@ static void portArmWatchpoints(void)
         CloseHandle(th);
     }
 }
+#elif defined(__ANDROID__)
+#include <unistd.h> /* _exit */
+#include <dlfcn.h>  /* dladdr */
+#include <ucontext.h>
+#include <stdint.h> /* uintptr_t (include/string.h is the N64 stub: no strrchr/memset) */
+
+/* Android crash handler: bionic has no backtrace() before API 33, and the
+ * platform's own crash dumper (debuggerd) already writes a symbolizable
+ * backtrace to logcat and a tombstone. So log the game state and the fault
+ * site to ge_direct.log (main.c's log goes there, port/src/android_pc.c),
+ * then put debuggerd's handler back and return: the faulting instruction
+ * runs again and debuggerd reports it. Offsets decode with
+ * llvm-addr2line -e libmain.so (the unstripped one under android/app/build). */
+static struct sigaction s_PortPrevAction[NSIG];
+
+static void portLogCodeAddr(const char *what, uintptr_t addr)
+{
+    Dl_info info;
+    if (dladdr((void *) addr, &info) && info.dli_fname != NULL) {
+        const char *base = info.dli_fname;
+        const char *p;
+        for (p = info.dli_fname; *p != '\0'; p++) {
+            if (*p == '/') {
+                base = p + 1;
+            }
+        }
+        fprintf(stderr, "  %s 0x%08lx (%s+0x%lx%s%s)\n", what, (unsigned long) addr,
+                base, (unsigned long) (addr - (uintptr_t) info.dli_fbase),
+                info.dli_sname ? " " : "", info.dli_sname ? info.dli_sname : "");
+    } else {
+        fprintf(stderr, "  %s 0x%08lx\n", what, (unsigned long) addr);
+    }
+}
+
+static void portCrashHandlerInfo(int sig, siginfo_t *si, void *uc_)
+{
+    extern unsigned int g_PortFramesPumped;
+    ucontext_t *uc = (ucontext_t *) uc_;
+    fprintf(stderr, "\nge: fatal signal %d (code %d, fault addr %p, frame=%u)\n",
+            sig, si->si_code, si->si_addr, g_PortFramesPumped);
+#if defined(__arm__)
+    portLogCodeAddr("pc", uc->uc_mcontext.arm_pc);
+    portLogCodeAddr("lr", uc->uc_mcontext.arm_lr);
+#endif
+    fflush(NULL);
+    sigaction(sig, &s_PortPrevAction[sig], NULL);
+}
+
+static void portArmCrashHandler(int sig)
+{
+    struct sigaction sa = { 0 };
+    sa.sa_sigaction = portCrashHandlerInfo;
+    sa.sa_flags = SA_SIGINFO | SA_ONSTACK;
+    sigemptyset(&sa.sa_mask);
+    sigaction(sig, &sa, &s_PortPrevAction[sig]);
+}
 #else
 #include <execinfo.h>
 
@@ -598,6 +654,17 @@ static void portInitRootDir(const char *argv0)
         return;
     }
     (void) argv0;
+#elif defined(__ANDROID__)
+    /* the app's external files dir (port/src/android_pc.c): the one place a
+     * user can reach over USB or adb without extra permissions */
+    {
+        extern const char *portAndroidRootDir(void);
+        snprintf(sPortRootDir, sizeof(sPortRootDir), "%s/", portAndroidRootDir());
+    }
+    (void) argv0;
+    (void) last;
+    portConLogf("ge: root: %s\n", sPortRootDir);
+    return;
 #else
     /* argv[0] is not authoritative on Linux (PATH launches have no slash,
      * launchers/symlinks point elsewhere), and a cwd fallback scattered
@@ -737,6 +804,11 @@ static void portDirectLaunchLog(void)
 }
 #endif
 
+#ifdef __ANDROID__
+/* SDL's Java activity calls SDL_main (port/src/android_pc.c), which runs
+ * this on a thread with a desktop-sized stack */
+#define main portMain
+#endif
 int main(int argc, char **argv)
 {
     { /* before the first log line, so the tilde console's ring holds the
@@ -782,17 +854,26 @@ int main(int argc, char **argv)
      * below (arena reservation, overlay check, SDL/GL, controller init) can
      * hang in a hooked process. The watchdog's 60 s boot grace covers all of
      * it. */
+#ifdef __ANDROID__
+    portArmCrashHandler(SIGSEGV);
+    portArmCrashHandler(SIGBUS);
+    portArmCrashHandler(SIGFPE);
+    portArmCrashHandler(SIGILL);
+#else
     signal(SIGSEGV, portCrashHandler);
+#endif
 #ifdef _WIN32
     SetUnhandledExceptionFilter(portSehHandler);
     portArmWatchpoints(); /* GE_WATCH=1: see comment above */
     portArmStallWatchdog(); /* always on: hangs become backtraces */
     AddVectoredExceptionHandler(1, portFirstChanceAV); /* crashes report even if a filter swallows them */
-#else
+#elif !defined(__ANDROID__)
     signal(SIGBUS, portCrashHandler);
 #endif
+#ifndef __ANDROID__
     signal(SIGFPE, portCrashHandler);
     signal(SIGILL, portCrashHandler);
+#endif
 #ifdef _WIN32
     /* GE_STALLTEST=1: park the main thread here forever so the stall
      * watchdog's boot-grace path + loader-lock-free module naming can be

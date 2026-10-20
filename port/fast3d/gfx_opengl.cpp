@@ -548,6 +548,8 @@ static struct ShaderProgram* gfx_opengl_create_and_load_new_shader(uint64_t shad
         // used to be two for loops from 0 to 4, but apparently intel drivers crashed trying to unroll it
         // used to have a const weight array, but apparently drivers for the GT620 don't like const array initializers
 
+        // the mix() weights below are float(three_point_filter): GLSL ES has
+        // no implicit int-to-float conversion, so mix(vec4, vec4, int) fails there
         if (current_filter_mode == FILTER_THREE_POINT)
             append_line(fs_buf, &fs_len, "lowp vec4 hookTexture2D(in sampler2D t, in vec2 uv, in vec2 texSize, in int three_point_filter) {");
         else
@@ -560,7 +562,7 @@ static struct ShaderProgram* gfx_opengl_create_and_load_new_shader(uint64_t shad
         append_line(fs_buf, &fs_len, "        vec2 scaled_uv = uv + (vec2(-1.5) + xy) / texSize;");
 
         if (current_filter_mode == FILTER_THREE_POINT)
-            append_line(fs_buf, &fs_len, "        lowp vec4 tex = mix(SAMPLE_TEX(t, scaled_uv), filter3point(t, scaled_uv, texSize), three_point_filter);");
+            append_line(fs_buf, &fs_len, "        lowp vec4 tex = mix(SAMPLE_TEX(t, scaled_uv), filter3point(t, scaled_uv, texSize), float(three_point_filter));");
         else
             append_line(fs_buf, &fs_len, "        lowp vec4 tex = SAMPLE_TEX(t, scaled_uv);");
 
@@ -571,7 +573,7 @@ static struct ShaderProgram* gfx_opengl_create_and_load_new_shader(uint64_t shad
     } else {
         if (current_filter_mode == FILTER_THREE_POINT) {
             append_line(fs_buf, &fs_len, "vec4 hookTexture2D(in sampler2D tex, in vec2 uv, in vec2 texSize, in int three_point_filter) {");
-            append_line(fs_buf, &fs_len, "    return mix(SAMPLE_TEX(tex, uv), filter3point(tex, uv, texSize), three_point_filter);");
+            append_line(fs_buf, &fs_len, "    return mix(SAMPLE_TEX(tex, uv), filter3point(tex, uv, texSize), float(three_point_filter));");
             append_line(fs_buf, &fs_len, "}");
         } else {
             append_line(fs_buf, &fs_len, "vec4 hookTexture2D(in sampler2D tex, in vec2 uv, in vec2 texSize) {");
@@ -1469,6 +1471,13 @@ static void gfx_opengl_init_extensions(void) {
 
     if (!GLAD_GL_ARB_texture_mirror_clamp_to_edge) {
         GLAD_GL_ARB_texture_mirror_clamp_to_edge = GLAD_GL_EXT_texture_mirror_clamp_to_edge;
+    }
+
+    // ES has only the float glDepthRangef (core since ES 2.0), but glad loads
+    // it for desktop GL 4.1 / ARB_ES2_compatibility only; set_depth_range
+    // falls back to glDepthRange, which ES lacks
+    if (gl_es && glad_glDepthRangef == NULL) {
+        glad_glDepthRangef = (PFNGLDEPTHRANGEFPROC) gl_load_proc("glDepthRangef");
     }
 
     if (GLVersion.major < 3 && !GLAD_GL_ARB_framebuffer_object) {

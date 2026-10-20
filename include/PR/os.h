@@ -1005,10 +1005,11 @@ extern void		osAckRamromWrite(void);
 
 /* byte string operations */
 
-#if defined(__GLIBC__) && !defined(TARGET_N64)
+#if (defined(__GLIBC__) || defined(__ANDROID__)) && !defined(TARGET_N64)
 /* Linux port builds: SDL.h drags in <strings.h>, whose size_t prototypes
  * conflict with the N64 int forms below. Take the host's declarations
- * everywhere on glibc so TUs that include both agree. */
+ * everywhere on glibc so TUs that include both agree. Android's bionic
+ * defines bcopy/bzero as macros there, so the same goes for it. */
 #include <strings.h>
 #else
 extern void     bcopy(const void *, void *, int);

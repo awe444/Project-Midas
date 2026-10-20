@@ -1,0 +1,5 @@
+# Gradle / AGP output and the machine-local SDK path
+build/
+.gradle/
+local.properties
+.cxx/

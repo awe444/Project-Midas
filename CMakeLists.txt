@@ -3,17 +3,57 @@ project(ge007 C)
 
 # GoldenEye PC port build (docs/port/PORT-PLAN.md). Built 32-bit first, which
 # defuses the codebase's pointer<->s32 casts and keeps Gfx 8 bytes.
-# The N64 ROM build stays on the classic Makefile; this file is PC-only.
+# The N64 ROM build stays on the classic Makefile; this file is PC/Android-only.
 
 set(CMAKE_C_STANDARD 11)
 
+# Android (android/README.md): armeabi-v7a, so still a 32-bit build and the
+# pointer casts above stay defused. The NDK compiler is clang, not gcc, and
+# the game is a shared library (libmain.so) that SDL's Java activity loads.
+if(ANDROID)
+    if(NOT CMAKE_ANDROID_ARCH_ABI STREQUAL "armeabi-v7a")
+        message(FATAL_ERROR "Android builds are armeabi-v7a only: the codebase needs 32-bit pointers (got ${CMAKE_ANDROID_ARCH_ABI})")
+    endif()
+    set(GE_VIDEO ON CACHE BOOL "" FORCE) # nothing to run headless on a phone
+    # SDL2 from source (android/README.md fetches it into third_party/); the
+    # Gradle build compiles its Java half from the same tree, so the two never
+    # drift apart. Added here, before any add_compile_options/include_directories
+    # below: a subdirectory inherits those, and the game's flags
+    # (-ffreestanding, -w, the repo's include dirs) must not reach SDL.
+    set(SDL2_ANDROID_SRC ${CMAKE_SOURCE_DIR}/third_party/SDL2-2.30.11 CACHE PATH "SDL2 source tree for the Android build")
+    if(NOT EXISTS ${SDL2_ANDROID_SRC}/CMakeLists.txt)
+        message(FATAL_ERROR "SDL2 source not found at ${SDL2_ANDROID_SRC} (see android/README.md)")
+    endif()
+    set(SDL_SHARED ON CACHE BOOL "" FORCE)
+    set(SDL_STATIC OFF CACHE BOOL "" FORCE)
+    set(SDL_TEST OFF CACHE BOOL "" FORCE)
+    add_subdirectory(${SDL2_ANDROID_SRC} ${CMAKE_BINARY_DIR}/SDL2)
+    add_compile_options(
+        # VFP already rounds every operation to single precision like the N64
+        # FPU (the job -msse2 -mfpmath=sse does on x86); keep clang from fusing
+        # a*b+c, which would flip the same borderline comparisons.
+        -ffp-contract=off
+        # clang makes these errors by default; gcc only warns, and the tree is
+        # built with every warning off (-w below)
+        $<$<COMPILE_LANGUAGE:C>:-Wno-error=implicit-function-declaration>
+        $<$<COMPILE_LANGUAGE:C>:-Wno-error=int-conversion>
+        $<$<COMPILE_LANGUAGE:C>:-Wno-error=incompatible-pointer-types>
+        $<$<COMPILE_LANGUAGE:C>:-Wno-error=incompatible-function-pointer-types>
+        $<$<COMPILE_LANGUAGE:C>:-Wno-error=implicit-int>
+        $<$<COMPILE_LANGUAGE:C>:-Wno-error=return-type>
+    )
+else()
+    add_compile_options(
+        -m32
+        # Use SSE scalar floats so every operation rounds to single precision like
+        # the N64 FPU; x87's 80-bit excess precision flips borderline comparisons
+        # (it broke the stan.c tile-walk edge test and room visibility in Egypt).
+        -msse2
+        -mfpmath=sse
+    )
+endif()
+
 add_compile_options(
-    -m32
-    # Use SSE scalar floats so every operation rounds to single precision like
-    # the N64 FPU; x87's 80-bit excess precision flips borderline comparisons
-    # (it broke the stan.c tile-walk edge test and room visibility in Egypt).
-    -msse2
-    -mfpmath=sse
     -fno-strict-aliasing
     -fwrapv
     -funsigned-char
@@ -49,6 +89,11 @@ if(WIN32)
                      -Wl,--image-base=0x10000000 -Wl,--disable-dynamicbase
                      -Wl,--stack,16777216)
     link_libraries(dbghelp)
+elseif(ANDROID)
+    # A shared library, so no -no-pie. -Bsymbolic binds the library's own
+    # references at link time: ucode_dl_stubs.c's absolute .set symbols then
+    # need no dynamic relocation (bionic would add the load bias to them).
+    add_link_options(-Wl,-Bsymbolic)
 else()
     add_link_options(-m32 -no-pie)
 endif()
@@ -67,8 +112,24 @@ endif()
 # port/include: shim<->scheduler interface (port_libultra.h). src/libultra:
 # lets vitbl.c resolve <io/viint.h>. Both appended LAST, so no include that
 # resolved before can be shadowed.
-include_directories(. include include/ultra64 include/PR src src/game src/inflate
+set(GE_INCLUDE_DIRS . include include/ultra64 include/PR src src/game src/inflate
                     port/include src/libultra)
+if(ANDROID)
+    # include/ holds the N64 libc headers (math.h, stdlib.h, limits.h, ...).
+    # libstdc++ reaches the real ones past them with #include_next, but
+    # libc++'s <cmath>/<cstdlib> include <math.h>/<stdlib.h> and must get its
+    # own wrappers: the fast3d C++ searches the repo dirs after the system.
+    foreach(dir ${GE_INCLUDE_DIRS})
+        include_directories($<$<COMPILE_LANGUAGE:C>:${CMAKE_SOURCE_DIR}/${dir}>)
+        add_compile_options($<$<COMPILE_LANGUAGE:CXX>:-idirafter${CMAKE_SOURCE_DIR}/${dir}>)
+    endforeach()
+    # bionic's fortified unistd.h needs SSIZE_MAX, which the N64 limits.h
+    # lacks, and its fortified (overloadable) sprintf rejects the int a
+    # not-yet-declared langGet() returns, where gcc only warns
+    add_compile_options(-U_FORTIFY_SOURCE)
+else()
+    include_directories(${GE_INCLUDE_DIRS})
+endif()
 
 # Game logic: everything in src/game.
 file(GLOB GAME_SRC CONFIGURE_DEPENDS src/game/*.c)
@@ -173,10 +234,19 @@ set(GU_SRC
 #
 # Known caveats: bg .c interior point tables, ANIM_DATA_* streams and
 # oddtextures texel data are big-endian blobs.
+if(ANDROID)
+    # The custom commands below call the compiler directly, so they need the
+    # target the toolchain file would otherwise add. Clang has no
+    # -fno-toplevel-reorder; scripts/port/asset_cc_ordered.py restores the
+    # source order instead (and checks every *_0x<offset> symbol).
+    set(ASSET_ARCH_FLAGS --target=${CMAKE_C_COMPILER_TARGET} --sysroot=${CMAKE_SYSROOT})
+else()
+    set(ASSET_ARCH_FLAGS -m32 -malign-data=abi -fno-toplevel-reorder)
+endif()
 set(ASSET_C_FLAGS
-    -m32 -malign-data=abi
+    ${ASSET_ARCH_FLAGS}
     -fms-extensions -ffreestanding -fno-strict-aliasing -fwrapv -funsigned-char
-    -fno-common -fno-zero-initialized-in-bss -fno-toplevel-reorder -fno-pic
+    -fno-common -fno-zero-initialized-in-bss -fno-pic
     -Og -w
     -DVERSION_US -DLANG_US -DREFRESH_NTSC
     -DLEFTOVERDEBUG -DLEFTOVERSPECTRUM -DBUGFIX_R0
@@ -206,6 +276,27 @@ else()
     set(ASSET_SYM_PREFIX "")
 endif()
 
+# How an asset TU becomes an object (sets ${out_var} to the command): gcc in
+# one step, or on Android clang via asset_cc_ordered.py (see ASSET_ARCH_FLAGS),
+# which for SEG assets also checks the layout - their *_0x<hex> names are the
+# N64 file offsets it must reproduce.
+if(ANDROID)
+    find_package(Python3 REQUIRED COMPONENTS Interpreter)
+endif()
+function(port_asset_cc_command out_var src obj check_offsets)
+    if(ANDROID)
+        set(cmd ${Python3_EXECUTABLE} ${CMAKE_SOURCE_DIR}/scripts/port/asset_cc_ordered.py
+            --cc ${CMAKE_C_COMPILER} --nm ${CMAKE_NM})
+        if(check_offsets)
+            list(APPEND cmd --check-offsets)
+        endif()
+        list(APPEND cmd -o ${obj} ${src} -- ${ASSET_C_FLAGS})
+    else()
+        set(cmd ${CMAKE_C_COMPILER} ${ASSET_C_FLAGS} -c ${src} -o ${obj})
+    endif()
+    set(${out_var} ${cmd} PARENT_SCOPE)
+endfunction()
+
 # NOTE: setup ai-list bytes are built from aicommands2.h's macros, so it must
 # stay in these DEPENDS; if an AI macro edit has no effect, check the asset
 # object is stale.
@@ -225,8 +316,9 @@ endfunction()
 
 function(port_add_asset_direct src sym)
     set(obj ${ASSET_OBJ_DIR}/${sym}.o)
+    port_asset_cc_command(cc_cmd ${CMAKE_SOURCE_DIR}/${src} ${obj}.raw OFF)
     add_custom_command(OUTPUT ${obj}
-        COMMAND ${CMAKE_C_COMPILER} ${ASSET_C_FLAGS} -c ${CMAKE_SOURCE_DIR}/${src} -o ${obj}.raw
+        COMMAND ${cc_cmd}
         COMMAND ${CMAKE_OBJCOPY} -G ${ASSET_SYM_PREFIX}${sym} ${obj}.raw ${obj}
         DEPENDS ${CMAKE_SOURCE_DIR}/${src}
                 ${CMAKE_SOURCE_DIR}/src/bondtypes.h
@@ -241,8 +333,9 @@ endfunction()
 # internals and plant the file symbol at .data offset 0 (the file start).
 function(port_add_asset_seg src sym)
     set(obj ${ASSET_OBJ_DIR}/${sym}.o)
+    port_asset_cc_command(cc_cmd ${CMAKE_SOURCE_DIR}/${src} ${obj}.raw ON)
     add_custom_command(OUTPUT ${obj}
-        COMMAND ${CMAKE_C_COMPILER} ${ASSET_C_FLAGS} -c ${CMAKE_SOURCE_DIR}/${src} -o ${obj}.raw
+        COMMAND ${cc_cmd}
         COMMAND ${CMAKE_OBJCOPY} -G ${ASSET_SYM_PREFIX}${sym} --add-symbol ${ASSET_SYM_PREFIX}${sym}=.data:0,global,object ${obj}.raw ${obj}
         DEPENDS ${CMAKE_SOURCE_DIR}/${src}
                 ${CMAKE_SOURCE_DIR}/src/bondtypes.h
@@ -370,6 +463,10 @@ endif()
 # By default the exe carries none of Rare's data and exits without the user's ROM.
 # -DGE_ROMDATA_FALLBACK=ON keeps compiled-in copies as a no-ROM fallback (see docs/port/romdata.md).
 option(GE_ROMDATA_FALLBACK "Keep compiled-in copies of the ROM-served asset classes (GE_ROMDATA=0 / missing-ROM fallback)" OFF)
+if(GE_ROMDATA_FALLBACK AND ANDROID)
+    # the fallback blobs need gcc's -fno-toplevel-reorder tiling (animdata.c)
+    message(FATAL_ERROR "GE_ROMDATA_FALLBACK is not supported on Android")
+endif()
 if(GE_ROMDATA_FALLBACK)
     set_source_files_properties(port/src/segments.c port/src/ramrom_data.c port/src/romdata.c port/src/animdata.c
         PROPERTIES COMPILE_DEFINITIONS GE_ROMDATA_FALLBACK=1)
@@ -396,11 +493,18 @@ else()
         ${CMAKE_SOURCE_DIR}/port/src/raphnet.c)
 endif()
 
-add_executable(ge ${GAME_SRC} ${ENGINE_SRC} ${GU_SRC} ${PORT_SRC}
-               ${ASSET_LOOSE_SRC} ${ASSET_OBJS} ${FAST3D_SRC})
-# The executable is named ProjectMidas, but the CMake target stays `ge` so build
-# scripts keep working, and ge_direct.log/Profiles keep their names.
-set_target_properties(ge PROPERTIES OUTPUT_NAME ProjectMidas)
+if(ANDROID)
+    # SDL's Java activity loads libSDL2.so, then libmain.so, and calls SDL_main
+    add_library(ge SHARED ${GAME_SRC} ${ENGINE_SRC} ${GU_SRC} ${PORT_SRC}
+                ${ASSET_LOOSE_SRC} ${ASSET_OBJS} ${FAST3D_SRC})
+    set_target_properties(ge PROPERTIES OUTPUT_NAME main)
+else()
+    add_executable(ge ${GAME_SRC} ${ENGINE_SRC} ${GU_SRC} ${PORT_SRC}
+                   ${ASSET_LOOSE_SRC} ${ASSET_OBJS} ${FAST3D_SRC})
+    # The executable is named ProjectMidas, but the CMake target stays `ge` so build
+    # scripts keep working, and ge_direct.log/Profiles keep their names.
+    set_target_properties(ge PROPERTIES OUTPUT_NAME ProjectMidas)
+endif()
 # The exe's own icon (Explorer, a pinned taskbar entry): port/win/ProjectMidas.ico,
 # generated with the window icon by scripts/port/make_icon.py.
 if(WIN32)
@@ -443,6 +547,9 @@ if(GE_VIDEO)
         # the game needs SDL2.dll beside the exe
         add_custom_command(TARGET ge POST_BUILD
             COMMAND ${CMAKE_COMMAND} -E copy_if_different ${SDL2_ROOT}/bin/SDL2.dll $<TARGET_FILE_DIR:ge>)
+    elseif(ANDROID)
+        # SDL2::SDL2 comes from the add_subdirectory at the top of this file
+        target_link_libraries(ge SDL2::SDL2 log android)
     else()
         # 32-bit SDL2: needs libsdl2-dev:i386 (+ libgl-dev:i386), or set
         # SDL2_LINUX_ROOT to a self-built prefix (e.g. CI's cached, user-writable
@@ -458,7 +565,9 @@ if(GE_VIDEO)
     endif()
     # the files a release ships beside the game, so a fresh build runs the
     # same: controller mappings and layouts (without them a new install has
-    # no default binds), the ini help and the base shader list
+    # no default binds), the ini help and the base shader list. (Android
+    # packages them as APK assets instead; port/src/android_pc.c unpacks them.)
+    if(NOT ANDROID)
     add_custom_command(TARGET ge POST_BUILD
         COMMAND ${CMAKE_COMMAND} -E copy_if_different
             ${CMAKE_SOURCE_DIR}/tools/gamecontrollerdb.txt
@@ -468,4 +577,5 @@ if(GE_VIDEO)
         COMMAND ${CMAKE_COMMAND} -E make_directory $<TARGET_FILE_DIR:ge>/Data
         COMMAND ${CMAKE_COMMAND} -E copy_if_different
             ${CMAKE_SOURCE_DIR}/tools/shaders_base.txt $<TARGET_FILE_DIR:ge>/Data/shaders_base.txt)
+    endif()
 endif()

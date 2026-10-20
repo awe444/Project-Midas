@@ -394,6 +394,14 @@ static void gfx_sdl_init(const struct GfxWindowInitSettings *set) {
 
     u32 verstart = 1;
     const u32 verend = sizeof(glver) / sizeof(*glver);
+#ifdef __ANDROID__
+    // Android has OpenGL ES only: start at the ES 3.0 entry. The window is
+    // always the whole screen there; asking for fullscreen also hides the
+    // status and navigation bars (SDL's immersive mode).
+    verstart = 4;
+    flags |= SDL_WINDOW_FULLSCREEN;
+    fullscreen_state = true;
+#endif
     const char *verstr = sysArgGetString("--gl-version");
     if (verstr && *verstr) {
         // user override
