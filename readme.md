@@ -98,6 +98,10 @@ sudo apt update
 sudo apt install libsdl2-2.0-0:i386 libgl1:i386
 ```
 
+### Android
+
+A 32-bit ARM APK builds with Gradle and the Android NDK instead of Docker. See [android/README.md](android/README.md).
+
 ## Known issues
 
 - On some Linux systems, levels draw as a few large blank triangles. Starting the game with these environment variables works around it:

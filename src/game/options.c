@@ -22,6 +22,13 @@
 #include "assets/obseg/text/LoptionE.h"
 #ifndef TARGET_N64
 #include "port_watchpages.h" /* the port watch pages */
+
+/* defined below but called first: clang rejects the implicit declaration
+ * gcc only warns about (Android build) */
+void reset_watch_item_is_actively_selected(void);
+void set_controlstick_lr_disabled(void);
+void disable_watch_stick_y_nav_ready(void);
+void sub_GAME_7F0A5210(void);
 /* Defined further down, next to the vanilla page drawer they replace; the
  * watch MOUSE layer needs them a few thousand lines earlier. */
 extern s32 g_portWatchPage;

@@ -46,6 +46,10 @@
 #include "stanintersection.h"
 #include "textrelated.h"
 
+/* defined below but called first: clang rejects the implicit declaration
+ * gcc only warns about (Android build) */
+void bondviewKillCurrentPlayer(void);
+
 #ifndef TARGET_N64
 /* PORT: PC includes and widescreen aim state that this half of the split
  * bondview.c needs. g_bondviewSceneWideFactor is DEFINED in bondview.c beside

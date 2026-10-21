@@ -61,6 +61,10 @@
 #endif
 #include <ultra64.h>
 
+/* defined below but called first: clang rejects the implicit declaration
+ * gcc only warns about (Android build) */
+void portProfileClear(s32 player);
+
 extern const char *portRootPath(const char *name); /* main.c: <exe dir>/name */
 extern void portConLogf(const char *fmt, ...);       /* port_console.c */
 extern s32 portVideoIniSetKey(const char *key, const char *value);

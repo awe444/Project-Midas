@@ -178,15 +178,20 @@ void texReset(void)
     /* The PC texture bank is compiled in and texLoad/texSelect overwrite its ids
      * with pointers in place, so snapshot the pristine bytes on first call and
      * restore them on every later stage load (otherwise the second load reads
-     * pointers as ids and crashes). The bounds rely on oddtextures.c being one
-     * TU built -fno-toplevel-reorder, contiguous from s_mpstageselimages to
-     * globalDL_0x000 (+0x78). */
+     * pointers as ids and crashes). The bank is oddtextures.c's .data, one
+     * contiguous block from s_mpstageselimages to globalDL_0x000 (+0x78) as
+     * gcc lays it out; clang emits the file in definition order instead, so
+     * the same block runs from globalDL_0x000 to the end of
+     * s_mpstageselimages. */
     {
         extern void *s_mpstageselimages;
         extern Gfx *globalDL_0x000;
+        extern const u32 port_mpstageselimages_size;
         static u8 *pristine;
-        u8 *lo = (u8 *) &s_mpstageselimages;
-        u8 *hi = (u8 *) &globalDL_0x000 + 0x78;
+        u8 *stagesel = (u8 *) &s_mpstageselimages;
+        u8 *dl0 = (u8 *) &globalDL_0x000;
+        u8 *lo = stagesel < dl0 ? stagesel : dl0;
+        u8 *hi = stagesel < dl0 ? dl0 + 0x78 : stagesel + port_mpstageselimages_size;
 
         if (pristine == NULL) {
             pristine = malloc(hi - lo);

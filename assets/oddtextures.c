@@ -756,5 +756,10 @@ sImageTableEntry s_mpstageselimages[] = {
     {IMAGE_MP_RANDOM, 0x44, 0x2C, 0, G_IM_FMT_I, G_IM_SIZ_8b, G_TX_CLAMP, G_TX_CLAMP, 0}      // bg/where
 };
 
-
-
+#ifndef TARGET_N64
+/* image_bank.c texReset snapshots s_mpstageselimages..globalDL_0x000 as one
+ * block. gcc lays this file out in reverse definition order and clang (the
+ * Android build) in definition order, so texReset needs the size of the
+ * object that ends up last. const: in .rodata, so .data keeps its layout. */
+const u32 port_mpstageselimages_size = sizeof(s_mpstageselimages);
+#endif

@@ -9,6 +9,8 @@ Writes:
                                (the window and taskbar icon on every platform)
     port/win/ProjectMidas.ico  16..256 px, compiled into ProjectMidas.exe by
                                port/win/ProjectMidas.rc (the file's own icon)
+    android/app/src/main/res/mipmap-*/ic_launcher.png
+                               the Android launcher icon, 48..192 px
 
 Run it again after changing icon.png and commit the outputs; the build only
 reads them, so WSL needs no Pillow.
@@ -20,6 +22,9 @@ ROOT = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)
 SRC = os.path.join(ROOT, 'port', 'include', 'icon.png')
 HDR = os.path.join(ROOT, 'port', 'include', 'icon_rgba.h')
 ICO = os.path.join(ROOT, 'port', 'win', 'ProjectMidas.ico')
+RES = os.path.join(ROOT, 'android', 'app', 'src', 'main', 'res')
+# launcher icon size per density bucket
+ANDROID_SIZES = {'mdpi': 48, 'hdpi': 72, 'xhdpi': 96, 'xxhdpi': 144, 'xxxhdpi': 192}
 SIZE = 64
 
 img = Image.open(SRC).convert('RGBA')
@@ -41,3 +46,9 @@ os.makedirs(os.path.dirname(ICO), exist_ok=True)
 img.save(ICO, format='ICO', sizes=[(16, 16), (24, 24), (32, 32), (48, 48), (64, 64), (128, 128), (256, 256)])
 print(HDR)
 print(ICO)
+
+for density, px in ANDROID_SIZES.items():
+    out = os.path.join(RES, 'mipmap-' + density, 'ic_launcher.png')
+    os.makedirs(os.path.dirname(out), exist_ok=True)
+    img.resize((px, px), Image.LANCZOS).save(out, optimize=True)
+    print(out)

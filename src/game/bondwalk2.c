@@ -1,5 +1,9 @@
 #include <ultra64.h>
 
+/* defined below but called first: clang rejects the implicit declaration
+ * gcc only warns about (Android build) */
+void display_image_at_position(Gfx **gdlptr, f32 *position, f32 *size, s32 twidth, u32 theight, u32 flipXY, u32 flipX, u32 flipY, u32 r, u32 g, u32 b, u32 alpha, u32 mipmapped_texture, u32 highlight_mode);
+
 /**
  * Draws a textured rectangle on the screen.
  * 
