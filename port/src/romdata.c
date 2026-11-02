@@ -296,14 +296,14 @@ static int romdataListDir(const char *dirpath, int wantdirs, char names[][256], 
 
 static char *romdataTrim(char *s)
 {
-    char *e;
-    while (*s == ' ' || *s == '\t') {
-        s++;
+    size_t len;
+
+    s += strspn(s, " \t");
+    len = strlen(s);
+    while (len > 0 && strchr(" \t\r\n", s[len - 1]) != NULL) {
+        len--;
     }
-    e = s + strlen(s);
-    while (e > s && (e[-1] == ' ' || e[-1] == '\t' || e[-1] == '\r' || e[-1] == '\n')) {
-        *--e = '\0';
-    }
+    s[len] = '\0';
     return s;
 }
 

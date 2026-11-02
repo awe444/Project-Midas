@@ -17,8 +17,15 @@
  *  - SDL calls SDL_main on a Java thread with a ~1 MB stack. The game's
  *    recursive room/portal walks overflow that (the Windows exe links a
  *    16 MB stack), so the game runs on a thread of its own.
+ *  - That thread asks for the fastest cores a 32-bit process may use. Left
+ *    alone the scheduler keeps it on the efficiency cores (on a Snapdragon
+ *    8 Gen 2, the A510s rather than the A710s): GL time per frame in the
+ *    attract demos was 5-13 ms there and 2-3 ms on the fast cores. The threads
+ *    it starts (render, audio) inherit the mask.
  */
 #ifdef __ANDROID__
+#define _GNU_SOURCE /* sched_setaffinity, CPU_SET */
+#include <sched.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <pthread.h>
@@ -137,6 +144,60 @@ static void portAndroidUnpack(const char *name)
     SDL_RWclose(in);
 }
 
+/* Restrict the calling thread to the allowed cores with the highest top clock.
+ * The allowed set already leaves out cores with no 32-bit support. */
+static void portAndroidPreferFastCores(void)
+{
+    cpu_set_t allowed;
+    cpu_set_t fast;
+    long best = 0;
+    int cpu;
+    int total = 0;
+    int kept = 0;
+
+    if (sched_getaffinity(0, sizeof(allowed), &allowed) != 0) {
+        return;
+    }
+    CPU_ZERO(&fast);
+    for (cpu = 0; cpu < CPU_SETSIZE; cpu++) {
+        char path[96];
+        long khz = 0;
+        FILE *f;
+
+        if (!CPU_ISSET(cpu, &allowed)) {
+            continue;
+        }
+        total++;
+        snprintf(path, sizeof(path), "/sys/devices/system/cpu/cpu%d/cpufreq/cpuinfo_max_freq", cpu);
+        f = fopen(path, "r");
+        if (f == NULL) {
+            return; /* cannot rank the cores: leave them to the scheduler */
+        }
+        if (fscanf(f, "%ld", &khz) != 1) {
+            khz = 0;
+        }
+        fclose(f);
+        if (khz > best) {
+            best = khz;
+            CPU_ZERO(&fast);
+            kept = 0;
+        }
+        if (khz == best) {
+            CPU_SET(cpu, &fast);
+            kept++;
+        }
+    }
+    if (kept == 0 || kept == total) {
+        return; /* nothing to gain: every allowed core is the same */
+    }
+    if (sched_setaffinity(0, sizeof(fast), &fast) != 0) {
+        fprintf(stderr, "ge: android: could not move to the fast cores\n");
+        return;
+    }
+    fprintf(stderr, "ge: android: game threads on the %d fastest of %d cores (%ld MHz)\n",
+            kept, total, best / 1000);
+}
+
 struct PortAndroidMainArgs {
     int argc;
     char **argv;
@@ -146,6 +207,7 @@ struct PortAndroidMainArgs {
 static void *portAndroidMainThread(void *p)
 {
     struct PortAndroidMainArgs *a = (struct PortAndroidMainArgs *) p;
+    portAndroidPreferFastCores();
     a->ret = portMain(a->argc, a->argv);
     return NULL;
 }

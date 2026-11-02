@@ -244,6 +244,7 @@ else()
     set(ASSET_ARCH_FLAGS -m32 -malign-data=abi -fno-toplevel-reorder)
 endif()
 set(ASSET_C_FLAGS
+    -std=gnu11
     ${ASSET_ARCH_FLAGS}
     -fms-extensions -ffreestanding -fno-strict-aliasing -fwrapv -funsigned-char
     -fno-common -fno-zero-initialized-in-bss -fno-pic
