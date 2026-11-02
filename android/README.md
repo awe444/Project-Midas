@@ -45,6 +45,12 @@ adb push baserom.u.z64 /sdcard/Android/data/com.projectmidas.game/files/Data/
 
 The game's folder on the device is `/sdcard/Android/data/com.projectmidas.game/files/`. It plays the part of the folder next to the desktop executable: `midas.ini`, `Data/` (the cart image, saves, profiles), `Data/Logs/ge_direct.log`. You can also copy the cart there over USB. Any of `.z64`, `.v64` or `.n64` works. Start the game once first so that the folder exists.
 
+If you push your own `midas.ini` with adb, run `adb shell chmod 666` on it afterwards. A pushed file belongs to the `shell` user, and the game stops at startup with a "settings will not be saved" error if it can't write the file.
+
+If the picture looks low resolution and slow, check Classic Mode first. It deliberately copies the N64: 240-line rendering, N64 frame pacing and load hitches. The desktop layouts toggle it with LB, which is too easy to hit on a handheld, so the APK ships them without that binding. Turn it on or off from the watch's Video page, or bind it yourself under the watch's controller options.
+
+The attract demos can't show 60 fps on any hardware, because they keep the N64 pacing they were recorded at. Measure frame rate in a level you play.
+
 Logs also go to logcat:
 
 ```

@@ -32,12 +32,25 @@ val checkPrerequisites by tasks.registering {
 val stageShippedAssets by tasks.registering(Sync::class) {
     description = "Stages the controller mappings, the ini help and the base shader list as APK assets."
     from(File(repoRoot, "tools")) {
-        include("gamecontrollerdb.txt", "gamecontrollerdefault.txt", "midas_ini_help.txt")
+        include("gamecontrollerdb.txt", "midas_ini_help.txt")
+    }
+    from(File(repoRoot, "tools/gamecontrollerdefault.txt")) {
+        // The Standard layouts put Classic Mode on LB, which is too easy to hit
+        // on a handheld: it drops a level to 240 lines and N64 pacing, and the
+        // choice is saved. Android ships them without it. It stays on the
+        // watch's Video page, and can still be bound on purpose.
+        filter { line: String -> line.replace("; classic_toggle=leftshoulder", "") }
     }
     from(File(repoRoot, "tools/shaders_base.txt")) {
         into("Data")
     }
     into(shippedAssets)
+    doLast {
+        // the layouts can change upstream: never let the strip above silently miss
+        if (File(shippedAssets, "gamecontrollerdefault.txt").readText().contains(Regex("""(?m)^[^#].*classic_toggle="""))) {
+            error("gamecontrollerdefault.txt still binds classic_toggle: update the filter in stageShippedAssets")
+        }
+    }
 }
 
 android {
